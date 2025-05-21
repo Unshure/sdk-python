@@ -1,0 +1,37 @@
+    def _handle_bedrock_error(self, error: ClientError) -> None:
+        """Handle Bedrock API errors consistently.
+        
+        Args:
+            error: The ClientError from Bedrock API.
+            
+        Raises:
+            ModelThrottledException: If throttling is detected.
+            ContextWindowOverflowException: If context window overflow is detected.
+            ClientError: For all other errors.
+        """
+        # Handle throttling for EventStreamError
+        if isinstance(error, EventStreamError):
+            error_message = str(error)
+            if "ThrottlingException" in error_message:
+                raise ModelThrottledException(error_message) from error
+            
+            # Handle context window overflow
+            if any(overflow_message in error_message for overflow_message in BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES):
+                logger.warning("bedrock threw context window overflow error")
+                raise ContextWindowOverflowException(error) from error
+            
+            # Re-raise all other errors
+            raise error
+        
+        # Handle regular ClientError
+        if error.response["Error"]["Code"] == "ThrottlingException":
+            raise ModelThrottledException(str(error)) from error
+        
+        # Handle context window overflow
+        error_message = str(error)
+        if any(overflow_message in error_message for overflow_message in BEDROCK_CONTEXT_WINDOW_OVERFLOW_MESSAGES):
+            logger.warning("bedrock threw context window overflow error")
+            raise ContextWindowOverflowException(error) from error
+        
+        # Re-raise all other errors
+        raise error
