@@ -119,23 +119,9 @@ def handle_content_block_delta(
 
     if "toolUse" in delta_content:
         if "input" not in state["current_tool_use"]:
-            # Initialize as empty dict to handle both string and dict inputs
-            state["current_tool_use"]["input"] = {}
-            
-        tool_input = delta_content["toolUse"]["input"]
-        
-        # Handle both string and dictionary inputs
-        if isinstance(tool_input, dict):
-            # For dictionary inputs (non-streaming mode), store the entire dict
-            state["current_tool_use"]["input"] = tool_input
-        elif isinstance(tool_input, str):
-            # For string inputs (streaming mode), append to existing string
-            if isinstance(state["current_tool_use"]["input"], str):
-                state["current_tool_use"]["input"] += tool_input
-            else:
-                # If we previously had a dict but now get a string, convert to string
-                state["current_tool_use"]["input"] = str(tool_input)
-                
+            state["current_tool_use"]["input"] = ""
+
+        state["current_tool_use"]["input"] += delta_content["toolUse"]["input"]
         callback_handler(delta=delta_content, current_tool_use=state["current_tool_use"], **kwargs)
 
     elif "text" in delta_content:
@@ -186,23 +172,21 @@ def handle_content_block_stop(state: Dict[str, Any]) -> Dict[str, Any]:
     reasoning_text = state["reasoningText"]
 
     if current_tool_use:
-        # Handle tool use content
+        if "input" not in current_tool_use:
+            current_tool_use["input"] = ""
+
+        try:
+            current_tool_use["input"] = json.loads(current_tool_use["input"])
+        except ValueError:
+            current_tool_use["input"] = {}
+
         tool_use_id = current_tool_use["toolUseId"]
         tool_use_name = current_tool_use["name"]
-        tool_input = current_tool_use.get("input", "")
-
-        # Only try to parse as JSON if it's a string and looks like JSON
-        if isinstance(tool_input, str) and tool_input.strip():
-            try:
-                tool_input = json.loads(tool_input)
-            except ValueError:
-                # If parsing fails, keep it as is
-                pass
 
         tool_use = ToolUse(
             toolUseId=tool_use_id,
             name=tool_use_name,
-            input={} if tool_input == "" else tool_input,
+            input=current_tool_use["input"],
         )
         content.append({"toolUse": tool_use})
         state["current_tool_use"] = {}
