@@ -25,6 +25,17 @@ jobs:
         python -m pip install --upgrade pip
         pip install hatch twine
 
+    - name: Validate version
+      run: |
+        version=$(hatch version)
+        if [[ $version =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Valid version format"
+            exit 0
+        else
+            echo "Invalid version format"
+            exit 1
+        fi
+
     - name: Build
       run: |
         hatch build
