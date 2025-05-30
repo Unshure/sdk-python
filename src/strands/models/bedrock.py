@@ -323,7 +323,6 @@ class BedrockModel(Model):
             ModelThrottledException: If the model service is throttling requests.
         """
         streaming = self.config.get("streaming", True)
-        print(request)
         try:
             if streaming:
                 # Streaming implementation
