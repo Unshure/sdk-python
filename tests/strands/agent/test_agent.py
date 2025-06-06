@@ -484,6 +484,30 @@ def test_agent__call__null_conversation_window_manager__doesnt_infinite_loop(moc
         agent("Test!")
 
 
+def test_agent__call__tool_truncation_doesnt_infinite_loop(mock_model, agent):
+    messages: Messages = [
+        {"role": "user", "content": [{"text": "Hello!"}]},
+        {
+            "role": "assistant",
+            "content": [{"toolUse": {"toolUseId": "123", "input": {"hello": "world"}, "name": "test"}}],
+        },
+        {
+            "role": "user",
+            "content": [
+                {"toolResult": {"toolUseId": "123", "content": [{"text": "Some large input!"}], "status": "success"}}
+            ],
+        },
+    ]
+    agent.messages = messages
+
+    mock_model.mock_converse.side_effect = ContextWindowOverflowException(
+        RuntimeError("Input is too long for requested model")
+    )
+
+    with pytest.raises(ContextWindowOverflowException):
+        agent("Test!")
+
+
 def test_agent__call__retry_with_overwritten_tool(mock_model, agent, tool):
     conversation_manager_spy = unittest.mock.Mock(wraps=agent.conversation_manager)
     agent.conversation_manager = conversation_manager_spy
