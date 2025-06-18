@@ -1,10 +1,11 @@
 """Abstract interface for conversation history management."""
 
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 if TYPE_CHECKING:
     from ...agent.agent import Agent
+    from ...types.content import Message
 
 
 class ConversationManager(ABC):
@@ -16,6 +17,7 @@ class ConversationManager(ABC):
     - Manage memory usage
     - Control context length
     - Maintain relevant conversation state
+    - Persist conversations to storage (optional)
     """
 
     @abstractmethod
@@ -52,5 +54,29 @@ class ConversationManager(ABC):
             agent: The agent whose conversation history will be reduced.
                 This list is modified in-place.
             e: The exception that triggered the context reduction, if any.
+        """
+        pass
+
+    def save_message(self, message: "Message", state: Optional[dict]) -> None:
+        """Save a message to the conversation history.
+
+        This method is optional and only needs to be implemented by conversation managers
+        that persist conversations to storage.
+
+        Args:
+            message: The message to save.
+            state: Optional state to save with the message.
+        """
+        pass
+
+    def load_conversation(self, conversation_id: str, agent_id: str) -> None:
+        """Load a conversation from storage.
+
+        This method is optional and only needs to be implemented by conversation managers
+        that persist conversations to storage.
+
+        Args:
+            conversation_id: The ID of the conversation to load.
+            agent_id: The ID of the agent associated with the conversation.
         """
         pass

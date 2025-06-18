@@ -26,6 +26,8 @@ from ..event_loop.event_loop import event_loop_cycle
 from ..handlers.callback_handler import CompositeCallbackHandler, PrintingCallbackHandler, null_callback_handler
 from ..handlers.tool_handler import AgentToolHandler
 from ..models.bedrock import BedrockModel
+from ..session.exceptions import SessionException
+from ..session.session_manager import SessionManager
 from ..telemetry.metrics import EventLoopMetrics
 from ..telemetry.tracer import get_tracer
 from ..tools.registry import ToolRegistry
@@ -223,6 +225,7 @@ class Agent:
         *,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        session_manager: Optional['SessionManager'] = None,
     ):
         """Initialize the Agent with the specified configuration.
 
@@ -259,6 +262,9 @@ class Agent:
                 Defaults to None.
             description: description of what the Agent does
                 Defaults to None.
+            session_manager: Manager for handling agent sessions including conversation history and state.
+                If provided, enables session-based persistence and state management. The session manager
+                handles user_id, agent_id, and session identification internally.
 
         Raises:
             ValueError: If max_parallel_tools is less than 1.
@@ -319,6 +325,26 @@ class Agent:
         # Initialize tracer instance (no-op if not configured)
         self.tracer = get_tracer()
         self.trace_span: Optional[trace.Span] = None
+        
+        # Initialize session management functionality
+        self.session_manager = session_manager
+        
+        # Setup session callback handler if session is enabled
+        if self.session_manager:
+            self.session_manager.restore_agent_from_session(self)
+            # Create a simple callback handler that delegates to the session manager
+            def session_callback(**kwargs: Any) -> None:
+                try:
+                    # Handle message persistence
+                    if "message" in kwargs:
+                        print("GOT CALLBACK WITH MESSAGE")
+                        message = kwargs["message"]
+                        self.session_manager.save_message(self, message)
+                except Exception as e:
+                    logger.error(f"Persistence operation failed: {e}", exc_info=True)
+            
+            self.callback_handler = CompositeCallbackHandler(self.callback_handler, session_callback)
+
         self.tool_caller = Agent.ToolCaller(self)
         self.name = name
         self.description = description
@@ -508,7 +534,6 @@ class Agent:
                 if supplementary_callback_handler is not None
                 else self.callback_handler
             )
-
             # Extract key parameters
             invocation_callback_handler(init_event_loop=True, **kwargs)
 
@@ -516,6 +541,8 @@ class Agent:
             message_content: List[ContentBlock] = [{"text": prompt}]
             new_message: Message = {"role": "user", "content": message_content}
             self.messages.append(new_message)
+
+            self.session_manager.save_message(self, new_message)
 
             # Execute the event loop cycle with retry logic for context limits
             return self._execute_event_loop_cycle(invocation_callback_handler, kwargs)
@@ -559,6 +586,9 @@ class Agent:
                 event_loop_parent_span=self.trace_span,
                 **kwargs,
             )
+
+            # Save the assistant's response to conversation manager if available
+            self.session_manager.save_message(message, state)
 
             return AgentResult(stop_reason, message, metrics, state)
 
@@ -622,6 +652,12 @@ class Agent:
         messages.append(tool_use_msg)
         messages.append(tool_result_msg)
         messages.append(assistant_msg)
+
+        # Save to conversation manager if available
+        self.session_manager.save_message(user_msg, None)
+        self.session_manager.save_message(tool_use_msg, None)
+        self.session_manager.save_message(tool_result_msg, None)
+        self.session_manager.save_message(assistant_msg, None)
 
     def _start_agent_trace_span(self, prompt: str) -> None:
         """Starts a trace span for the agent.
