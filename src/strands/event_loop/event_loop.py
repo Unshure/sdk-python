@@ -22,7 +22,7 @@ from ..types.exceptions import ContextWindowOverflowException, EventLoopExceptio
 from ..types.models import Model
 from ..types.streaming import Metrics, StopReason
 from ..types.tools import ToolConfig, ToolHandler, ToolResult, ToolUse
-from .error_handler import handle_input_too_long_error, handle_throttling_error
+from .error_handler import handle_throttling_error
 from .message_processor import clean_orphaned_empty_tool_uses
 from .streaming import stream_messages
 
@@ -31,23 +31,6 @@ logger = logging.getLogger(__name__)
 MAX_ATTEMPTS = 6
 INITIAL_DELAY = 4
 MAX_DELAY = 240  # 4 minutes
-
-
-def initialize_state(**kwargs: Any) -> Any:
-    """Initialize the request state if not present.
-
-    Creates an empty request_state dictionary if one doesn't already exist in the
-    provided keyword arguments.
-
-    Args:
-        **kwargs: Keyword arguments that may contain a request_state.
-
-    Returns:
-        The updated kwargs dictionary with request_state initialized if needed.
-    """
-    if "request_state" not in kwargs:
-        kwargs["request_state"] = {}
-    return kwargs
 
 
 def event_loop_cycle(
@@ -105,10 +88,11 @@ def event_loop_cycle(
     kwargs["event_loop_cycle_id"] = uuid.uuid4()
 
     event_loop_metrics: EventLoopMetrics = kwargs.get("event_loop_metrics", EventLoopMetrics())
-
     # Initialize state and get cycle trace
-    kwargs = initialize_state(**kwargs)
-    cycle_start_time, cycle_trace = event_loop_metrics.start_cycle()
+    if "request_state" not in kwargs:
+        kwargs["request_state"] = {}
+    attributes = {"event_loop_cycle_id": str(kwargs.get("event_loop_cycle_id"))}
+    cycle_start_time, cycle_trace = event_loop_metrics.start_cycle(attributes=attributes)
     kwargs["event_loop_cycle_trace"] = cycle_trace
 
     callback_handler(start=True)
@@ -136,6 +120,7 @@ def event_loop_cycle(
     metrics: Metrics
 
     # Retry loop for handling throttling exceptions
+    current_delay = INITIAL_DELAY
     for attempt in range(MAX_ATTEMPTS):
         model_id = model.config.get("model_id") if hasattr(model, "config") else None
         model_invoke_span = tracer.start_model_invoke_span(
@@ -145,14 +130,19 @@ def event_loop_cycle(
         )
 
         try:
-            stop_reason, message, usage, metrics, kwargs["request_state"] = stream_messages(
-                model,
-                system_prompt,
-                messages,
-                tool_config,
-                callback_handler,
-                **kwargs,
-            )
+            # TODO: As part of the migration to async-iterator, we will continue moving callback_handler calls up the
+            #       call stack. At this point, we converted all events that were previously passed to the handler in
+            #       `stream_messages` into yielded events that now have the "callback" key. To maintain backwards
+            #       compatability, we need to combine the event with kwargs before passing to the handler. This we will
+            #       revisit when migrating to strongly typed events.
+            for event in stream_messages(model, system_prompt, messages, tool_config):
+                if "callback" in event:
+                    inputs = {**event["callback"], **(kwargs if "delta" in event["callback"] else {})}
+                    callback_handler(**inputs)
+            else:
+                stop_reason, message, usage, metrics = event["stop"]
+                kwargs.setdefault("request_state", {})
+
             if model_invoke_span:
                 tracer.end_model_invoke_span(model_invoke_span, message, usage)
             break  # Success! Break out of retry loop
@@ -160,16 +150,7 @@ def event_loop_cycle(
         except ContextWindowOverflowException as e:
             if model_invoke_span:
                 tracer.end_span_with_error(model_invoke_span, str(e), e)
-            return handle_input_too_long_error(
-                e,
-                messages,
-                model,
-                system_prompt,
-                tool_config,
-                callback_handler,
-                tool_handler,
-                kwargs,
-            )
+            raise e
 
         except ModelThrottledException as e:
             if model_invoke_span:
@@ -177,7 +158,7 @@ def event_loop_cycle(
 
             # Handle throttling errors with exponential backoff
             should_retry, current_delay = handle_throttling_error(
-                e, attempt, MAX_ATTEMPTS, INITIAL_DELAY, MAX_DELAY, callback_handler, kwargs
+                e, attempt, MAX_ATTEMPTS, current_delay, MAX_DELAY, callback_handler, kwargs
             )
             if should_retry:
                 continue
@@ -235,7 +216,7 @@ def event_loop_cycle(
             )
 
         # End the cycle and return results
-        event_loop_metrics.end_cycle(cycle_start_time, cycle_trace)
+        event_loop_metrics.end_cycle(cycle_start_time, cycle_trace, attributes)
         if cycle_span:
             tracer.end_event_loop_cycle_span(
                 span=cycle_span,
@@ -248,6 +229,10 @@ def event_loop_cycle(
         # Don't invoke the callback_handler or log the exception - we already did it when we
         # raised the exception and we don't need that duplication.
         raise
+    except ContextWindowOverflowException as e:
+        if cycle_span:
+            tracer.end_span_with_error(cycle_span, str(e), e)
+        raise e
     except Exception as e:
         if cycle_span:
             tracer.end_span_with_error(cycle_span, str(e), e)
@@ -314,26 +299,6 @@ def recurse_event_loop(
     )
 
 
-def prepare_next_cycle(kwargs: Dict[str, Any], event_loop_metrics: EventLoopMetrics) -> Dict[str, Any]:
-    """Prepare state for the next event loop cycle.
-
-    Updates the keyword arguments with the current event loop metrics and stores the current cycle ID as the parent
-    cycle ID for the next cycle. This maintains the parent-child relationship between cycles for tracing and metrics.
-
-    Args:
-        kwargs: Current keyword arguments containing event loop state.
-        event_loop_metrics: The metrics object tracking event loop execution.
-
-    Returns:
-        Updated keyword arguments ready for the next cycle.
-    """
-    # Store parent cycle ID
-    kwargs["event_loop_metrics"] = event_loop_metrics
-    kwargs["event_loop_parent_cycle_id"] = kwargs["event_loop_cycle_id"]
-
-    return kwargs
-
-
 def _handle_tool_execution(
     stop_reason: StopReason,
     message: Message,
@@ -374,7 +339,7 @@ def _handle_tool_execution(
         kwargs (Dict[str, Any]): Additional keyword arguments, including request state.
 
     Returns:
-        Tuple[StopReason, Message, EventLoopMetrics, Dict[str, Any]]: 
+        Tuple[StopReason, Message, EventLoopMetrics, Dict[str, Any]]:
             - The stop reason,
             - The updated message,
             - The updated event loop metrics,
@@ -384,7 +349,6 @@ def _handle_tool_execution(
 
     if not tool_uses:
         return stop_reason, message, event_loop_metrics, kwargs["request_state"]
-
     tool_handler_process = partial(
         tool_handler.process,
         messages=messages,
@@ -407,7 +371,9 @@ def _handle_tool_execution(
         parallel_tool_executor=tool_execution_handler,
     )
 
-    kwargs = prepare_next_cycle(kwargs, event_loop_metrics)
+    # Store parent cycle ID for the next cycle
+    kwargs["event_loop_metrics"] = event_loop_metrics
+    kwargs["event_loop_parent_cycle_id"] = kwargs["event_loop_cycle_id"]
 
     tool_result_message: Message = {
         "role": "user",

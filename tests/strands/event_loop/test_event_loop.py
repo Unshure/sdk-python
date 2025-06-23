@@ -12,6 +12,13 @@ from strands.types.exceptions import ContextWindowOverflowException, EventLoopEx
 
 
 @pytest.fixture
+def mock_time():
+    """Fixture to mock the time module in the error_handler."""
+    with unittest.mock.patch.object(strands.event_loop.error_handler, "time") as mock:
+        yield mock
+
+
+@pytest.fixture
 def model():
     return unittest.mock.Mock()
 
@@ -104,27 +111,6 @@ def mock_tracer():
     return tracer
 
 
-@pytest.mark.parametrize(
-    ("kwargs", "exp_state"),
-    [
-        (
-            {"request_state": {"key1": "value1"}},
-            {"key1": "value1"},
-        ),
-        (
-            {},
-            {},
-        ),
-    ],
-)
-def test_initialize_state(kwargs, exp_state):
-    kwargs = strands.event_loop.event_loop.initialize_state(**kwargs)
-
-    tru_state = kwargs["request_state"]
-
-    assert tru_state == exp_state
-
-
 def test_event_loop_cycle_text_response(
     model,
     model_id,
@@ -157,57 +143,8 @@ def test_event_loop_cycle_text_response(
     assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
 
 
-def test_event_loop_cycle_text_response_input_too_long(
-    model,
-    model_id,
-    system_prompt,
-    messages,
-    tool_config,
-    callback_handler,
-    tool_handler,
-    tool_execution_handler,
-):
-    model.converse.side_effect = [
-        ContextWindowOverflowException(RuntimeError("Input is too long for requested model")),
-        [
-            {"contentBlockDelta": {"delta": {"text": "test text"}}},
-            {"contentBlockStop": {}},
-        ],
-    ]
-    messages.append(
-        {
-            "role": "user",
-            "content": [
-                {
-                    "toolResult": {
-                        "toolUseId": "t1",
-                        "status": "success",
-                        "content": [{"text": "2025-04-01T00:00:00"}],
-                    },
-                },
-            ],
-        }
-    )
-
-    tru_stop_reason, tru_message, _, tru_request_state = strands.event_loop.event_loop.event_loop_cycle(
-        model=model,
-        model_id=model_id,
-        system_prompt=system_prompt,
-        messages=messages,
-        tool_config=tool_config,
-        callback_handler=callback_handler,
-        tool_handler=tool_handler,
-        tool_execution_handler=tool_execution_handler,
-    )
-    exp_stop_reason = "end_turn"
-    exp_message = {"role": "assistant", "content": [{"text": "test text"}]}
-    exp_request_state = {}
-
-    assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
-
-
-@unittest.mock.patch.object(strands.event_loop.error_handler, "time")
 def test_event_loop_cycle_text_response_throttling(
+    mock_time,
     model,
     model_id,
     system_prompt,
@@ -240,6 +177,53 @@ def test_event_loop_cycle_text_response_throttling(
     exp_request_state = {}
 
     assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
+    # Verify that sleep was called once with the initial delay
+    mock_time.sleep.assert_called_once()
+
+
+def test_event_loop_cycle_exponential_backoff(
+    mock_time,
+    model,
+    model_id,
+    system_prompt,
+    messages,
+    tool_config,
+    callback_handler,
+    tool_handler,
+    tool_execution_handler,
+):
+    """Test that the exponential backoff works correctly with multiple retries."""
+    # Set up the model to raise throttling exceptions multiple times before succeeding
+    model.converse.side_effect = [
+        ModelThrottledException("ThrottlingException | ConverseStream"),
+        ModelThrottledException("ThrottlingException | ConverseStream"),
+        ModelThrottledException("ThrottlingException | ConverseStream"),
+        [
+            {"contentBlockDelta": {"delta": {"text": "test text"}}},
+            {"contentBlockStop": {}},
+        ],
+    ]
+
+    tru_stop_reason, tru_message, _, tru_request_state = strands.event_loop.event_loop.event_loop_cycle(
+        model=model,
+        model_id=model_id,
+        system_prompt=system_prompt,
+        messages=messages,
+        tool_config=tool_config,
+        callback_handler=callback_handler,
+        tool_handler=tool_handler,
+        tool_execution_handler=tool_execution_handler,
+    )
+
+    # Verify the final response
+    assert tru_stop_reason == "end_turn"
+    assert tru_message == {"role": "assistant", "content": [{"text": "test text"}]}
+    assert tru_request_state == {}
+
+    # Verify that sleep was called with increasing delays
+    # Initial delay is 4, then 8, then 16
+    assert mock_time.sleep.call_count == 3
+    assert mock_time.sleep.call_args_list == [call(4), call(8), call(16)]
 
 
 def test_event_loop_cycle_text_response_error(
@@ -458,19 +442,6 @@ def test_event_loop_cycle_stop(
     exp_request_state = {"stop_event_loop": True}
 
     assert tru_stop_reason == exp_stop_reason and tru_message == exp_message and tru_request_state == exp_request_state
-
-
-def test_prepare_next_cycle():
-    kwargs = {"event_loop_cycle_id": "c1"}
-    event_loop_metrics = strands.telemetry.metrics.EventLoopMetrics()
-    tru_result = strands.event_loop.event_loop.prepare_next_cycle(kwargs, event_loop_metrics)
-    exp_result = {
-        "event_loop_cycle_id": "c1",
-        "event_loop_parent_cycle_id": "c1",
-        "event_loop_metrics": event_loop_metrics,
-    }
-
-    assert tru_result == exp_result
 
 
 def test_cycle_exception(
@@ -728,3 +699,176 @@ def test_event_loop_cycle_with_parent_span(
     mock_tracer.start_event_loop_cycle_span.assert_called_once_with(
         event_loop_kwargs=unittest.mock.ANY, parent_span=parent_span, messages=messages
     )
+
+
+def test_event_loop_cycle_callback(
+    model,
+    model_id,
+    system_prompt,
+    messages,
+    tool_config,
+    callback_handler,
+    tool_handler,
+    tool_execution_handler,
+):
+    model.converse.return_value = [
+        {"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "test"}}}},
+        {"contentBlockDelta": {"delta": {"toolUse": {"input": '{"value"}'}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"text": "value"}}}},
+        {"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "value"}}}},
+        {"contentBlockStop": {}},
+        {"contentBlockStart": {"start": {}}},
+        {"contentBlockDelta": {"delta": {"text": "value"}}},
+        {"contentBlockStop": {}},
+    ]
+
+    strands.event_loop.event_loop.event_loop_cycle(
+        model=model,
+        model_id=model_id,
+        system_prompt=system_prompt,
+        messages=messages,
+        tool_config=tool_config,
+        callback_handler=callback_handler,
+        tool_handler=tool_handler,
+        tool_execution_handler=tool_execution_handler,
+    )
+
+    callback_handler.assert_has_calls(
+        [
+            call(start=True),
+            call(start_event_loop=True),
+            call(event={"contentBlockStart": {"start": {"toolUse": {"toolUseId": "123", "name": "test"}}}}),
+            call(event={"contentBlockDelta": {"delta": {"toolUse": {"input": '{"value"}'}}}}),
+            call(
+                delta={"toolUse": {"input": '{"value"}'}},
+                current_tool_use={"toolUseId": "123", "name": "test", "input": {}},
+                model_id="m1",
+                event_loop_cycle_id=unittest.mock.ANY,
+                request_state={},
+                event_loop_cycle_trace=unittest.mock.ANY,
+                event_loop_cycle_span=None,
+            ),
+            call(event={"contentBlockStop": {}}),
+            call(event={"contentBlockStart": {"start": {}}}),
+            call(event={"contentBlockDelta": {"delta": {"reasoningContent": {"text": "value"}}}}),
+            call(
+                reasoningText="value",
+                delta={"reasoningContent": {"text": "value"}},
+                reasoning=True,
+                model_id="m1",
+                event_loop_cycle_id=unittest.mock.ANY,
+                request_state={},
+                event_loop_cycle_trace=unittest.mock.ANY,
+                event_loop_cycle_span=None,
+            ),
+            call(event={"contentBlockDelta": {"delta": {"reasoningContent": {"signature": "value"}}}}),
+            call(
+                reasoning_signature="value",
+                delta={"reasoningContent": {"signature": "value"}},
+                reasoning=True,
+                model_id="m1",
+                event_loop_cycle_id=unittest.mock.ANY,
+                request_state={},
+                event_loop_cycle_trace=unittest.mock.ANY,
+                event_loop_cycle_span=None,
+            ),
+            call(event={"contentBlockStop": {}}),
+            call(event={"contentBlockStart": {"start": {}}}),
+            call(event={"contentBlockDelta": {"delta": {"text": "value"}}}),
+            call(
+                data="value",
+                delta={"text": "value"},
+                model_id="m1",
+                event_loop_cycle_id=unittest.mock.ANY,
+                request_state={},
+                event_loop_cycle_trace=unittest.mock.ANY,
+                event_loop_cycle_span=None,
+            ),
+            call(event={"contentBlockStop": {}}),
+            call(
+                message={
+                    "role": "assistant",
+                    "content": [
+                        {"toolUse": {"toolUseId": "123", "name": "test", "input": {}}},
+                        {"reasoningContent": {"reasoningText": {"text": "value", "signature": "value"}}},
+                        {"text": "value"},
+                    ],
+                },
+            ),
+        ],
+    )
+
+
+def test_request_state_initialization():
+    # Call without providing request_state
+    tru_stop_reason, tru_message, _, tru_request_state = strands.event_loop.event_loop.event_loop_cycle(
+        model=MagicMock(),
+        model_id=MagicMock(),
+        system_prompt=MagicMock(),
+        messages=MagicMock(),
+        tool_config=MagicMock(),
+        callback_handler=MagicMock(),
+        tool_handler=MagicMock(),
+        tool_execution_handler=MagicMock(),
+    )
+
+    # Verify request_state was initialized to empty dict
+    assert tru_request_state == {}
+
+    # Call with pre-existing request_state
+    initial_request_state = {"key": "value"}
+    tru_stop_reason, tru_message, _, tru_request_state = strands.event_loop.event_loop.event_loop_cycle(
+        model=MagicMock(),
+        model_id=MagicMock(),
+        system_prompt=MagicMock(),
+        messages=MagicMock(),
+        tool_config=MagicMock(),
+        callback_handler=MagicMock(),
+        tool_handler=MagicMock(),
+        request_state=initial_request_state,
+    )
+
+    # Verify existing request_state was preserved
+    assert tru_request_state == initial_request_state
+
+
+def test_prepare_next_cycle_in_tool_execution(model, tool_stream):
+    """Test that cycle ID and metrics are properly updated during tool execution."""
+    model.converse.side_effect = [
+        tool_stream,
+        [
+            {"contentBlockStop": {}},
+        ],
+    ]
+
+    # Create a mock for recurse_event_loop to capture the kwargs passed to it
+    with unittest.mock.patch.object(strands.event_loop.event_loop, "recurse_event_loop") as mock_recurse:
+        # Set up mock to return a valid response
+        mock_recurse.return_value = (
+            "end_turn",
+            {"role": "assistant", "content": [{"text": "test text"}]},
+            strands.telemetry.metrics.EventLoopMetrics(),
+            {},
+        )
+
+        # Call event_loop_cycle which should execute a tool and then call recurse_event_loop
+        strands.event_loop.event_loop.event_loop_cycle(
+            model=model,
+            model_id=MagicMock(),
+            system_prompt=MagicMock(),
+            messages=MagicMock(),
+            tool_config=MagicMock(),
+            callback_handler=MagicMock(),
+            tool_handler=MagicMock(),
+            tool_execution_handler=MagicMock(),
+        )
+
+        assert mock_recurse.called
+
+        # Verify required properties are present
+        recursive_kwargs = mock_recurse.call_args[1]
+        assert "event_loop_metrics" in recursive_kwargs
+        assert "event_loop_parent_cycle_id" in recursive_kwargs
+        assert recursive_kwargs["event_loop_parent_cycle_id"] == recursive_kwargs["event_loop_cycle_id"]
