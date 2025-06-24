@@ -18,6 +18,7 @@ class Session:
     user_id: str
     agent_id: str
     messages: List[Any] = field(default_factory=list)
+    state: Dict[str, Any] = field(default_factory=dict)
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     
@@ -69,6 +70,7 @@ class Session:
             "user_id": self.user_id,
             "agent_id": self.agent_id,
             "messages": self.messages,
+            "state": self.state,
             "created_at": self.created_at.isoformat() + "Z" if self.created_at else None,
             "updated_at": self.updated_at.isoformat() + "Z" if self.updated_at else None,
         }
@@ -97,6 +99,7 @@ class Session:
             user_id=data["user_id"],
             agent_id=data["agent_id"],
             messages=data.get("messages", []),
+            state=data.get("state", {}),
             created_at=created_at,
             updated_at=updated_at,
         )

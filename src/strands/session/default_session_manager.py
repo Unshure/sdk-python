@@ -53,8 +53,30 @@ class DefaultSessionManager(SessionManager):
         self.session = session
     
     
+    def update_session(self, agent: 'Agent', message: Any) -> None:
+        """Update the session with a message and current agent state.
+        
+        Args:
+            agent: Agent instance containing current session state
+            message: Message to save to the session
+            
+        Raises:
+            SessionException: If update operation fails
+        """      
+        # Add the message
+        self.session.add_message(message)
+        
+        # Update session state from agent state
+        if hasattr(agent, 'state') and hasattr(agent.state, 'get_all'):
+            self.session.state = agent.state.get_all()
+        
+        # Save to file
+        self.session_datastore.update_session(self.session)
+    
     def save_message(self, agent: 'Agent', message: Any) -> None:
         """Save a single message to the current session.
+        
+        Deprecated: Use update_session() instead for unified message and state persistence.
         
         Args:
             agent: Agent instance containing current session state
@@ -63,24 +85,29 @@ class DefaultSessionManager(SessionManager):
         Raises:
             SessionException: If save operation fails
         """      
-        # Add the message
-        print(self.session.to_dict())
-        print(message)
-        self.session.add_message(message)
-        print(self.session.to_dict())
-
-        
-        # Save to file
-        self.session_datastore.update_session(self.session)
+        # Delegate to update_session for backward compatibility
+        self.update_session(agent, message)
     
     def restore_agent_from_session(self, agent: 'Agent') -> None:
-        """Update session data from an agent's current state.
+        """Restore agent data from the current session.
         
         Args:
-            agent: Agent instance to save session data from
+            agent: Agent instance to restore session data to
             
         Raises:
-            SessionException: If update operation fails
+            SessionException: If restore operation fails
         """
+        # Restore messages
         agent.messages = self.session.messages.copy()
+        
+        # Restore state if agent has state management and session has state
+        if hasattr(agent, 'state') and hasattr(agent.state, 'set') and self.session.state:
+            # Clear existing state
+            for namespace in agent.state.list_namespaces():
+                agent.state.clear(namespace=namespace)
+            
+            # Restore state from session
+            for namespace_name, namespace_data in self.session.state.items():
+                for key, value in namespace_data.items():
+                    agent.state.set(key, value, namespace=namespace_name)
 

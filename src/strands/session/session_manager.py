@@ -18,20 +18,20 @@ class SessionManager(ABC):
     """
     
     @abstractmethod
-    def save_message(self, agent: 'Agent', message: Message) -> None:
-        """Save a single message to the current session.
+    def update_session(self, agent: 'Agent', message: Message) -> None:
+        """Update the session with a message and current agent state.
         
         Appends the message to the session's conversation history and updates
-        the session with the agent's current state.
+        the session with the agent's current state for persistence.
         
         Args:
             agent: Agent instance containing current session state
             message: Message to save to the session
             
         Raises:
-            SessionException: If save operation fails
+            SessionException: If update operation fails
         """
-        raise NotImplementedError("Subclasses must implement save_message")
+        raise NotImplementedError("Subclasses must implement update_session")
     
     @abstractmethod
     def restore_agent_from_session(self, agent: 'Agent') -> None:

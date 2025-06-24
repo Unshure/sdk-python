@@ -28,6 +28,7 @@ from ..handlers.tool_handler import AgentToolHandler
 from ..models.bedrock import BedrockModel
 from ..session.exceptions import SessionException
 from ..session.session_manager import SessionManager
+from .state import AgentState
 from ..telemetry.metrics import EventLoopMetrics
 from ..telemetry.tracer import get_tracer
 from ..tools.registry import ToolRegistry
@@ -326,6 +327,9 @@ class Agent:
         self.tracer = get_tracer()
         self.trace_span: Optional[trace.Span] = None
         
+        # Initialize agent state management
+        self.state = AgentState()
+        
         # Initialize session management functionality
         self.session_manager = session_manager
         
@@ -337,9 +341,8 @@ class Agent:
                 try:
                     # Handle message persistence
                     if "message" in kwargs:
-                        print("GOT CALLBACK WITH MESSAGE")
                         message = kwargs["message"]
-                        self.session_manager.save_message(self, message)
+                        self.session_manager.update_session(self, message)
                 except Exception as e:
                     logger.error(f"Persistence operation failed: {e}", exc_info=True)
             
