@@ -53,20 +53,3 @@ class MockSessionManager(SessionManager):
 
     def initialize(self, event):
         raise NotImplementedError("Test implementation")
-
-
-def test_mock_manager_instantiation():
-    """Test that mock manager can be instantiated."""
-    manager = MockSessionManager()
-    assert isinstance(manager, SessionManager)
-
-
-def test_abstract_methods_raise_not_implemented():
-    """Test that abstract methods raise NotImplementedError."""
-    manager = MockSessionManager()
-
-    with pytest.raises(NotImplementedError):
-        manager.append_message(None)
-
-    with pytest.raises(NotImplementedError):
-        manager.initialize(None)

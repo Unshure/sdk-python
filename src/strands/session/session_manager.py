@@ -1,10 +1,14 @@
 """Session manager interface for agent session management."""
 
 from abc import ABC, abstractmethod
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from ..hooks.events import AgentInitializedEvent, MessageAddedEvent
+from ..hooks.events import AfterInvocationEvent, AgentInitializedEvent, MessageAddedEvent
 from ..hooks.registry import HookProvider, HookRegistry
+from ..types.content import Message
+
+if TYPE_CHECKING:
+    from ..agent.agent import Agent
 
 
 class SessionManager(HookProvider, ABC):
@@ -17,21 +21,32 @@ class SessionManager(HookProvider, ABC):
 
     def register_hooks(self, registry: HookRegistry, **kwargs: Any) -> None:
         """Register initialize and append_message as hooks for the Agent."""
-        registry.add_callback(AgentInitializedEvent, self.initialize)
-        registry.add_callback(MessageAddedEvent, self.append_message)
+        registry.add_callback(AgentInitializedEvent, lambda event: self.initialize(event.agent))
+        registry.add_callback(MessageAddedEvent, lambda event: self.append_message(event.message, event.agent))
+        registry.add_callback(MessageAddedEvent, lambda event: self.persist_agent(event.agent))
+        registry.add_callback(AfterInvocationEvent, lambda event: self.persist_agent(event.agent))
 
     @abstractmethod
-    def append_message(self, event: MessageAddedEvent) -> None:
+    def append_message(self, message: Message, agent: "Agent") -> None:
         """Append a message to the agent's session.
 
         Args:
-            event: Event for a newly added Message
+            message: Message to append to the session's agent
+            agent: Agent to appent the message to
         """
 
     @abstractmethod
-    def initialize(self, event: AgentInitializedEvent) -> None:
+    def persist_agent(self, agent: "Agent") -> None:
+        """Persist the agent in the session.
+
+        Args:
+            agent: Agent to update in the session
+        """
+
+    @abstractmethod
+    def initialize(self, agent: "Agent") -> None:
         """Initialize an agent with a session.
 
         Args:
-            event: Event when an agent is initialized
+            agent: Agent to update in the session
         """

@@ -29,19 +29,34 @@ def file_manager(temp_dir):
 @pytest.fixture
 def sample_session():
     """Create sample session for testing."""
-    return create_session(session_id="test-session", session_type=SessionType.AGENT)
+    return create_session(
+        session_id="test-session",
+        session_type=SessionType.AGENT,
+    )
 
 
 @pytest.fixture
 def sample_agent():
     """Create sample agent for testing."""
-    return SessionAgent(agent_id="test-agent", session_id="test-session", state={"key": "value"})
+    return SessionAgent(
+        agent_id="test-agent",
+        session_id="test-session",
+        state={"key": "value"},
+        created_at="2025-01-01T00:00:00Z",
+        updated_at="2025-01-01T00:00:00Z",
+    )
 
 
 @pytest.fixture
 def sample_message():
     """Create sample message for testing."""
-    return SessionMessage(role="user", content=[ContentBlock(text="Hello world")], message_id="test-message")
+    return SessionMessage(
+        role="user",
+        content=[ContentBlock(text="Hello world")],
+        message_id="test-message",
+        created_at="2025-01-01T00:00:00Z",
+        updated_at="2025-01-01T00:00:00Z",
+    )
 
 
 class TestFileSessionManagerSessionOperations:

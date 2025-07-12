@@ -19,6 +19,16 @@ class NullConversationManager(ConversationManager):
     - Situations where the full conversation history should be preserved
     """
 
+    def restore_from_state(self, conversation_manager_state: dict[str, Any], agent: "Agent") -> None:
+        """Does nothing to the conversation history."""
+        if conversation_manager_state.get("__name__") != NullConversationManager.__name__:
+            raise ValueError("Invalid conversation manager state.")
+        return
+
+    def get_state(self) -> dict[str, Any]:
+        """Returns an empty dictionary as this Conversation Manager does not modify the conversation."""
+        return {"__name__": NullConversationManager.__name__}
+
     def apply_management(self, agent: "Agent", **kwargs: Any) -> None:
         """Does nothing to the conversation history.
 

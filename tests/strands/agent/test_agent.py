@@ -1403,6 +1403,7 @@ def test_agent_restored_from_session_management():
             agent_id=DEFAULT_SESSION_AGENT_ID,
             event_loop_metrics=EventLoopMetrics().to_dict(),
             state={"foo": "bar"},
+            conversation_manager_state=SlidingWindowConversationManager().get_state(),
             created_at="2025-01-01T00:00:00Z",
             updated_at="2025-01-01T00:00:00Z",
         ),

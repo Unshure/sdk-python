@@ -117,6 +117,10 @@ class FileSessionManager(AgentSessionManager, SessionRepository):
     def update_agent(self, session_id: str, session_agent: SessionAgent) -> None:
         """Update agent data."""
         agent_id = session_agent["agent_id"]
+        previous_agent = self.read_agent(session_id, agent_id)
+        if not previous_agent:
+            raise ValueError("Agent %s in session %s does not exist.", agent_id, session_id)
+        session_agent["created_at"] = previous_agent["created_at"]
         agent_file = os.path.join(self._get_agent_path(session_id, agent_id), "agent.json")
         agent_dict = cast(dict, session_agent)
         self._write_file(agent_file, agent_dict)
@@ -138,6 +142,10 @@ class FileSessionManager(AgentSessionManager, SessionRepository):
     def update_message(self, session_id: str, agent_id: str, session_message: SessionMessage) -> None:
         """Update message data."""
         message_id = session_message["message_id"]
+        previous_message = self.read_message(session_id, agent_id, message_id)
+        if previous_message is None:
+            raise ValueError("Message %s for agent %s in session %s does not exist.", message_id, agent_id, session_id)
+        session_message["created_at"] = previous_message["created_at"]
         message_file = self._get_message_path(session_id, agent_id, message_id)
         message_dict = cast(dict, session_message)
         self._write_file(message_file, message_dict)
@@ -157,8 +165,8 @@ class FileSessionManager(AgentSessionManager, SessionRepository):
                 file_path = os.path.join(messages_dir, filename)
                 message_files.append((file_path, os.path.getctime(file_path)))
 
-        # Sort by creation time (newest first)
-        message_files.sort(key=lambda x: x[1], reverse=True)
+        # Sort by creation time (oldest first)
+        message_files.sort(key=lambda x: x[1])
 
         # Apply pagination
         if limit is not None:

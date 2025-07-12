@@ -5,22 +5,6 @@ from strands.agent.agent import Agent
 from strands.types.exceptions import ContextWindowOverflowException
 
 
-@pytest.mark.parametrize(("role", "exp_result"), [("user", True), ("assistant", False)])
-def test_is_user_message(role, exp_result):
-    from strands.agent.conversation_manager.sliding_window_conversation_manager import is_user_message
-
-    tru_result = is_user_message({"role": role})
-    assert tru_result == exp_result
-
-
-@pytest.mark.parametrize(("role", "exp_result"), [("user", False), ("assistant", True)])
-def test_is_assistant_message(role, exp_result):
-    from strands.agent.conversation_manager.sliding_window_conversation_manager import is_assistant_message
-
-    tru_result = is_assistant_message({"role": role})
-    assert tru_result == exp_result
-
-
 @pytest.fixture
 def conversation_manager(request):
     params = {

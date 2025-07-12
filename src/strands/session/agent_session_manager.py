@@ -2,9 +2,10 @@
 
 import logging
 
+from ..agent.agent import Agent
 from ..agent.state import AgentState
-from ..hooks.events import AgentInitializedEvent, MessageAddedEvent
 from ..telemetry.metrics import EventLoopMetrics
+from ..types.content import Message
 from ..types.session import (
     SessionType,
     create_session,
@@ -41,33 +42,27 @@ class AgentSessionManager(SessionManager):
         self.session = session
         self._default_agent_initialized = False
 
-    def append_message(self, event: MessageAddedEvent) -> None:
-        """Append a message to the agent's session.
-
-        Args:
-            event: Event for a newly added Message
-        """
-        agent = event.agent
-        message = event.message
-
+    def append_message(self, message: Message, agent: Agent) -> None:
+        """Append a message to the agent's session."""
         if agent.agent_id is None:
             raise ValueError("`agent.agent_id` must be set before appending message to session.")
 
         session_message = session_message_from_message(message)
         self.session_repository.create_message(self.session_id, agent.agent_id, session_message)
+
+    def persist_agent(self, agent: Agent) -> None:
+        """Persist the agent to the session.
+
+        Args:
+            agent: Agent to update in the session
+        """
         self.session_repository.update_agent(
             self.session_id,
             session_agent_from_agent(agent=agent),
         )
 
-    def initialize(self, event: AgentInitializedEvent) -> None:
-        """Initialize an agent with a session.
-
-        Args:
-            event: Event when an agent is initialized
-        """
-        agent = event.agent
-
+    def initialize(self, agent: Agent) -> None:
+        """Initialize an agent with a session."""
         if agent.agent_id is None:
             if self._default_agent_initialized:
                 raise ValueError(
@@ -102,9 +97,13 @@ class AgentSessionManager(SessionManager):
                 agent.agent_id,
                 self.session_id,
             )
+            agent.state = AgentState(session_agent["state"])
+            agent.event_loop_metrics = EventLoopMetrics.from_dict(session_agent["event_loop_metrics"])
+            # Initialize the agent with all of the messages from its past conversation
             agent.messages = [
                 session_message_to_message(session_message)
                 for session_message in self.session_repository.list_messages(self.session_id, agent.agent_id)
             ]
-            agent.state = AgentState(session_agent["state"])
-            agent.event_loop_metrics = EventLoopMetrics.from_dict(session_agent["event_loop_metrics"])
+            print(agent.messages)
+            # Restore the conversation manager state, and restore the agent's messages array to its previous state
+            agent.conversation_manager.restore_from_state(session_agent["conversation_manager_state"], agent)

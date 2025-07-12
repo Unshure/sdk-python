@@ -6,35 +6,11 @@ from typing import TYPE_CHECKING, Any, Optional
 if TYPE_CHECKING:
     from ...agent.agent import Agent
 
-from ...types.content import Message, Messages
+from ...types.content import Messages
 from ...types.exceptions import ContextWindowOverflowException
 from .conversation_manager import ConversationManager
 
 logger = logging.getLogger(__name__)
-
-
-def is_user_message(message: Message) -> bool:
-    """Check if a message is from a user.
-
-    Args:
-        message: The message object to check.
-
-    Returns:
-        True if the message has the user role, False otherwise.
-    """
-    return message["role"] == "user"
-
-
-def is_assistant_message(message: Message) -> bool:
-    """Check if a message is from an assistant.
-
-    Args:
-        message: The message object to check.
-
-    Returns:
-        True if the message has the assistant role, False otherwise.
-    """
-    return message["role"] == "assistant"
 
 
 class SlidingWindowConversationManager(ConversationManager):
@@ -54,6 +30,21 @@ class SlidingWindowConversationManager(ConversationManager):
         """
         self.window_size = window_size
         self.should_truncate_results = should_truncate_results
+        self._removed_message_count: int = 0
+
+    def restore_from_state(self, conversation_manager_state: dict[str, Any], agent: "Agent") -> None:
+        """Restores the Sliding Window Conversation manager and restores the agents messages array."""
+        if conversation_manager_state.get("__name__") != SlidingWindowConversationManager.__name__:
+            raise ValueError("Invalid conversation manager state.")
+        self._removed_message_count = conversation_manager_state["removed_message_count"]
+        agent.messages[:] = agent.messages[self._removed_message_count :]
+
+    def get_state(self) -> dict[str, Any]:
+        """Returns a dictionary representation of the state for the Sliding Window Conversation Manager."""
+        return {
+            "__name__": SlidingWindowConversationManager.__name__,
+            "removed_message_count": self._removed_message_count,
+        }
 
     def apply_management(self, agent: "Agent", **kwargs: Any) -> None:
         """Apply the sliding window to the agent's messages array to maintain a manageable history size.
@@ -130,6 +121,7 @@ class SlidingWindowConversationManager(ConversationManager):
             raise ContextWindowOverflowException("Unable to trim conversation context!") from e
 
         # Overwrite message history
+        self._removed_message_count += trim_index
         messages[:] = messages[trim_index:]
 
     def _truncate_tool_results(self, messages: Messages, msg_idx: int) -> bool:

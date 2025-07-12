@@ -42,6 +42,7 @@ class SessionAgent(TypedDict):
     agent_id: str
     event_loop_metrics: Dict[str, Any]
     state: Dict[str, Any]
+    conversation_manager_state: Dict[str, Any]
     created_at: str
     updated_at: str
 
@@ -54,6 +55,7 @@ def session_agent_from_agent(agent: Agent) -> SessionAgent:
     return SessionAgent(
         agent_id=agent.agent_id,
         event_loop_metrics=agent.event_loop_metrics.to_dict(),
+        conversation_manager_state=agent.conversation_manager.get_state(),
         state=agent.state.get(),
         created_at=now,
         updated_at=now,

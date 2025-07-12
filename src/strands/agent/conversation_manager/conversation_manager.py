@@ -19,7 +19,16 @@ class ConversationManager(ABC):
     """
 
     @abstractmethod
-    # pragma: no cover
+    def restore_from_state(self, conversation_manager_state: dict[str, Any], agent: "Agent") -> None:
+        """Restore the Conversation Manager and restore the agents messages array."""
+        pass
+
+    @abstractmethod
+    def get_state(self) -> dict[str, Any]:
+        """Get the current state of a Conversation Manager as a Json serializable dictionary."""
+        pass
+
+    @abstractmethod
     def apply_management(self, agent: "Agent", **kwargs: Any) -> None:
         """Applies management strategy to the provided agent.
 
@@ -35,7 +44,6 @@ class ConversationManager(ABC):
         pass
 
     @abstractmethod
-    # pragma: no cover
     def reduce_context(self, agent: "Agent", e: Optional[Exception] = None, **kwargs: Any) -> None:
         """Called when the model's context window is exceeded.
 

@@ -77,6 +77,33 @@ class SummarizingConversationManager(ConversationManager):
         self.preserve_recent_messages = preserve_recent_messages
         self.summarization_agent = summarization_agent
         self.summarization_system_prompt = summarization_system_prompt
+        self._summary_message: Optional[Message] = None
+        self._removed_message_count: int = 0
+
+    def restore_from_state(self, conversation_manager_state: dict[str, Any], agent: "Agent") -> None:
+        """Restores the Summarizing Conversation manager and restores the agents messages array.
+
+        Args:
+            conversation_manager_state: The previous state of the Summarizing Conversation Manager.
+            agent: The agent whose conversation history will be managed. The agent's messages list should be
+                unmodified at this point, all messages should be present in the messages array.
+        """
+        if conversation_manager_state.get("__name__") != SummarizingConversationManager.__name__:
+            raise ValueError("Invalid conversation manager state.")
+        self._summary_message = conversation_manager_state.get("summary_message")
+        self._removed_message_count = conversation_manager_state.get("removed_message_count", 0)
+
+        if self._summary_message is not None:
+            # When initializing the agent from a previous state, we want to re-apply
+            agent.messages[:] = [self._summary_message] + agent.messages[self._removed_message_count :]
+
+    def get_state(self) -> dict[str, Any]:
+        """Returns a dictionary representation of the state for the Summarizing Conversation Manager."""
+        return {
+            "__name__": SummarizingConversationManager.__name__,
+            "summary_message": self._summary_message,
+            "removed_message_count": self._removed_message_count,
+        }
 
     def apply_management(self, agent: "Agent", **kwargs: Any) -> None:
         """Apply management strategy to conversation history.
@@ -128,11 +155,17 @@ class SummarizingConversationManager(ConversationManager):
             messages_to_summarize = agent.messages[:messages_to_summarize_count]
             remaining_messages = agent.messages[messages_to_summarize_count:]
 
+            # Keep track of the number of messages that have been summarized thus far.
+            self._removed_message_count += len(messages_to_summarize)
+            # If there is already a summary message, don't count it in the removed_message_count.
+            if self._summary_message:
+                self._removed_message_count -= 1
+
             # Generate summary
-            summary_message = self._generate_summary(messages_to_summarize, agent)
+            self._summary_message = self._generate_summary(messages_to_summarize, agent)
 
             # Replace the summarized messages with the summary
-            agent.messages[:] = [summary_message] + remaining_messages
+            agent.messages[:] = [self._summary_message] + remaining_messages
 
         except Exception as summarization_error:
             logger.error("Summarization failed: %s", summarization_error)

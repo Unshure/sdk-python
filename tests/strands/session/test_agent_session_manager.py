@@ -5,7 +5,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from strands.agent.agent import Agent
-from strands.hooks.events import AgentInitializedEvent, MessageAddedEvent
+from strands.agent.conversation_manager.sliding_window_conversation_manager import SlidingWindowConversationManager
 from strands.session.agent_session_manager import AgentSessionManager
 from strands.types.content import ContentBlock
 from strands.types.session import Session, SessionAgent, SessionMessage, SessionType
@@ -26,14 +26,8 @@ def session_manager(mock_repository):
 
 @pytest.fixture
 def agent():
-    """Create a mock agent."""
-    agent = MagicMock(spec=Agent)
-    agent.agent_id = None
-    agent.messages = [{"role": "user", "content": [{"text": "Hello!"}]}]
-    agent.state = MagicMock()
-    agent.event_loop_metrics = MagicMock()
-    agent.event_loop_metrics.to_dict.return_value = {}
-    return agent
+    """Create an agent."""
+    return Agent(messages=[{"role": "user", "content": [{"text": "Hello!"}]}])
 
 
 def test_init_creates_session_if_not_exists(mock_repository):
@@ -70,8 +64,7 @@ def test_initialize_with_no_agent_id(session_manager, agent):
     assert agent.agent_id is None
 
     # Initialize agent
-    event = AgentInitializedEvent(agent=agent)
-    session_manager.initialize(event)
+    session_manager.initialize(agent)
 
     # Verify agent ID set to default
     assert agent.agent_id == "default"
@@ -88,8 +81,7 @@ def test_initialize_with_existing_agent_id(session_manager, agent):
     agent.agent_id = "custom-agent"
 
     # Initialize agent
-    event = AgentInitializedEvent(agent=agent)
-    session_manager.initialize(event)
+    session_manager.initialize(agent)
 
     # Verify agent created in repository
     agent_data = session_manager.session_repository.read_agent("test-session", "custom-agent")
@@ -100,16 +92,14 @@ def test_initialize_with_existing_agent_id(session_manager, agent):
 def test_initialize_multiple_agents_without_id(session_manager, agent):
     """Test initializing multiple agents without IDs."""
     # First agent initialization works
-    event1 = AgentInitializedEvent(agent=agent)
-    session_manager.initialize(event1)
+    session_manager.initialize(agent)
 
     # Second agent without ID should fail
     agent2 = MagicMock(spec=Agent)
     agent2.agent_id = None
-    event2 = AgentInitializedEvent(agent=agent2)
 
     with pytest.raises(ValueError, match="only one agent with no `agent_id`"):
-        session_manager.initialize(event2)
+        session_manager.initialize(agent2)
 
 
 def test_initialize_restores_existing_agent(session_manager, agent):
@@ -123,6 +113,7 @@ def test_initialize_restores_existing_agent(session_manager, agent):
         session_id="test-session",
         state={"key": "value"},
         event_loop_metrics={},
+        conversation_manager_state=SlidingWindowConversationManager().get_state(),
         created_at="2025-01-01T00:00:00Z",
         updated_at="2025-01-01T00:00:00Z",
     )
@@ -139,8 +130,7 @@ def test_initialize_restores_existing_agent(session_manager, agent):
     session_manager.session_repository.create_message("test-session", "existing-agent", message)
 
     # Initialize agent
-    event = AgentInitializedEvent(agent=agent)
-    session_manager.initialize(event)
+    session_manager.initialize(agent)
 
     # Verify agent state restored
     assert agent.state.get("key") == "value"
@@ -160,6 +150,7 @@ def test_append_message(session_manager, agent):
         session_id="test-session",
         state={},
         event_loop_metrics={},
+        conversation_manager_state={},
         created_at="2025-01-01T00:00:00Z",
         updated_at="2025-01-01T00:00:00Z",
     )
@@ -169,8 +160,7 @@ def test_append_message(session_manager, agent):
     message = {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
 
     # Append message
-    event = MessageAddedEvent(agent=agent, message=message)
-    session_manager.append_message(event)
+    session_manager.append_message(message, agent)
 
     # Verify message created in repository
     messages = session_manager.session_repository.list_messages("test-session", "test-agent")
@@ -188,6 +178,5 @@ def test_append_message_without_agent_id(session_manager, agent):
     message = {"role": "user", "content": [{"type": "text", "text": "Hello"}]}
 
     # Append message should fail
-    event = MessageAddedEvent(agent=agent, message=message)
     with pytest.raises(ValueError, match="`agent.agent_id` must be set"):
-        session_manager.append_message(event)
+        session_manager.append_message(message, agent)
