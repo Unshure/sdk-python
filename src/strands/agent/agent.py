@@ -350,14 +350,23 @@ class Agent:
         all_tools = self.tool_registry.get_all_tools_config()
         return list(all_tools.keys())
 
-    def __call__(self, prompt: Union[str, list[ContentBlock]], **kwargs: Any) -> AgentResult:
+    def __call__(
+        self, prompt: Union[str, list[ContentBlock], list[Message], None] = None, **kwargs: Any
+    ) -> AgentResult:
         """Process a natural language prompt through the agent's event loop.
 
-        This method implements the conversational interface (e.g., `agent("hello!")`). It adds the user's prompt to
-        the conversation history, processes it through the model, executes any tool calls, and returns the final result.
+        This method implements the conversational interface with multiple input patterns:
+        - String input: `agent("hello!")`
+        - ContentBlock list: `agent([{"text": "hello"}, {"image": {...}}])`
+        - Message list: `agent([{"role": "user", "content": [{"text": "hello"}]}])`
+        - No input: `agent()` - uses existing conversation history
 
         Args:
-            prompt: User input as text or list of ContentBlock objects for multi-modal content.
+            prompt: User input in various formats:
+                - str: Simple text input
+                - list[ContentBlock]: Multi-modal content blocks
+                - list[Message]: Complete messages with roles
+                - None: Use existing conversation history
             **kwargs: Additional parameters to pass through the event loop.
 
         Returns:
@@ -376,14 +385,23 @@ class Agent:
             future = executor.submit(execute)
             return future.result()
 
-    async def invoke_async(self, prompt: Union[str, list[ContentBlock]], **kwargs: Any) -> AgentResult:
+    async def invoke_async(
+        self, prompt: Union[str, list[ContentBlock], list[Message], None] = None, **kwargs: Any
+    ) -> AgentResult:
         """Process a natural language prompt through the agent's event loop.
 
-        This method implements the conversational interface (e.g., `agent("hello!")`). It adds the user's prompt to
-        the conversation history, processes it through the model, executes any tool calls, and returns the final result.
+        This method implements the conversational interface with multiple input patterns:
+        - String input: Simple text input
+        - ContentBlock list: Multi-modal content blocks
+        - Message list: Complete messages with roles
+        - No input: Use existing conversation history
 
         Args:
-            prompt: User input as text or list of ContentBlock objects for multi-modal content.
+            prompt: User input in various formats:
+                - str: Simple text input
+                - list[ContentBlock]: Multi-modal content blocks
+                - list[Message]: Complete messages with roles
+                - None: Use existing conversation history
             **kwargs: Additional parameters to pass through the event loop.
 
         Returns:
@@ -400,7 +418,9 @@ class Agent:
 
         return cast(AgentResult, event["result"])
 
-    def structured_output(self, output_model: Type[T], prompt: Optional[Union[str, list[ContentBlock]]] = None) -> T:
+    def structured_output(
+        self, output_model: Type[T], prompt: Optional[Union[str, list[ContentBlock], list[Message]]] = None
+    ) -> T:
         """This method allows you to get structured output from the agent.
 
         If you pass in a prompt, it will be used temporarily without adding it to the conversation history.
@@ -412,7 +432,11 @@ class Agent:
         Args:
             output_model: The output model (a JSON schema written as a Pydantic BaseModel)
                 that the agent will use when responding.
-            prompt: The prompt to use for the agent (will not be added to conversation history).
+            prompt: The prompt to use for the agent in various formats:
+                - str: Simple text input
+                - list[ContentBlock]: Multi-modal content blocks
+                - list[Message]: Complete messages with roles
+                - None: Use existing conversation history
 
         Raises:
             ValueError: If no conversation history or prompt is provided.
@@ -426,7 +450,7 @@ class Agent:
             return future.result()
 
     async def structured_output_async(
-        self, output_model: Type[T], prompt: Optional[Union[str, list[ContentBlock]]] = None
+        self, output_model: Type[T], prompt: Optional[Union[str, list[ContentBlock], list[Message]]] = None
     ) -> T:
         """This method allows you to get structured output from the agent.
 
@@ -450,12 +474,22 @@ class Agent:
             if not self.messages and not prompt:
                 raise ValueError("No conversation history or prompt provided")
 
-            # Create temporary messages array if prompt is provided
-            if prompt:
-                content: list[ContentBlock] = [{"text": prompt}] if isinstance(prompt, str) else prompt
-                temp_messages = self.messages + [{"role": "user", "content": content}]
-            else:
-                temp_messages = self.messages
+            # Handle different input types for structured output
+            if prompt is not None:
+                if isinstance(prompt, str):
+                    # String input - convert to user message
+                    content_blocks: list[ContentBlock] = [{"text": prompt}]
+                    self._append_message({"role": "user", "content": content_blocks})
+                elif isinstance(prompt, list):
+                    if len(prompt) > 0 and isinstance(prompt[0], dict) and "role" in prompt[0]:
+                        # List[Message] input - add all messages to conversation
+                        for message in cast(list[Message], prompt):
+                            self._append_message(message)
+                    else:
+                        # List[ContentBlock] input - convert to user message
+                        content_blocks = cast(list[ContentBlock], prompt)
+                        self._append_message({"role": "user", "content": content_blocks})
+                # Let the end API call handle any other type errors
 
             events = self.model.structured_output(output_model, temp_messages, system_prompt=self.system_prompt)
             async for event in events:
@@ -467,16 +501,25 @@ class Agent:
         finally:
             self.hooks.invoke_callbacks(AfterInvocationEvent(agent=self))
 
-    async def stream_async(self, prompt: Union[str, list[ContentBlock]], **kwargs: Any) -> AsyncIterator[Any]:
+    async def stream_async(
+        self,
+        prompt: Union[str, list[ContentBlock], list[Message], None] = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[Any]:
         """Process a natural language prompt and yield events as an async iterator.
 
-        This method provides an asynchronous interface for streaming agent events, allowing
-        consumers to process stream events programmatically through an async iterator pattern
-        rather than callback functions. This is particularly useful for web servers and other
-        async environments.
+        This method provides an asynchronous interface for streaming agent events with multiple input patterns:
+        - String input: Simple text input
+        - ContentBlock list: Multi-modal content blocks
+        - Message list: Complete messages with roles
+        - No input: Use existing conversation history
 
         Args:
-            prompt: User input as text or list of ContentBlock objects for multi-modal content.
+            prompt: User input in various formats:
+                - str: Simple text input
+                - list[ContentBlock]: Multi-modal content blocks
+                - list[Message]: Complete messages with roles
+                - None: Use existing conversation history
             **kwargs: Additional parameters to pass to the event loop.
 
         Yields:
@@ -500,13 +543,27 @@ class Agent:
         """
         callback_handler = kwargs.get("callback_handler", self.callback_handler)
 
-        content: list[ContentBlock] = [{"text": prompt}] if isinstance(prompt, str) else prompt
-        message: Message = {"role": "user", "content": content}
+        # Process input and get message to add (if any)
+        message = self._process_input(prompt)
 
-        self.trace_span = self._start_agent_trace_span(message)
+        # Start trace span with appropriate message
+        trace_message = message if message else {"role": "user", "content": [{"text": "Continuing conversation"}]}
+        self.trace_span = self._start_agent_trace_span(trace_message)
+
         with trace_api.use_span(self.trace_span):
             try:
-                events = self._run_loop(message, invocation_state=kwargs)
+                if message:
+                    # Single message case
+                    events = self._run_loop(message, invocation_state=kwargs)
+                else:
+                    # No new message case - process existing conversation
+                    # Create a dummy event loop without adding a message
+                    self.hooks.invoke_callbacks(BeforeInvocationEvent(agent=self))
+                    yield {"callback": {"init_event_loop": True, **kwargs}}
+
+                    # Execute the event loop cycle with existing messages
+                    events = self._execute_event_loop_cycle(kwargs)
+
                 async for event in events:
                     if "callback" in event:
                         callback_handler(**event["callback"])
@@ -691,6 +748,55 @@ class Agent:
                 trace_attributes["error"] = error
 
             self.tracer.end_agent_span(**trace_attributes)
+
+    def _process_input(self, prompt: Union[str, list[ContentBlock], list[Message], None]) -> Optional[Message]:
+        """Process different input types and return a message to add to conversation.
+
+        Args:
+            prompt: User input in various formats
+
+        Returns:
+            Message to add to conversation, or None if no new message should be added
+        """
+        if prompt is None:
+            # No input case - use existing conversation history
+            if not self.messages:
+                raise ValueError("No conversation history or prompt provided")
+            return None
+
+        if isinstance(prompt, str):
+            # String input - convert to user message
+            content_blocks: list[ContentBlock] = [{"text": prompt}]
+            return {"role": "user", "content": content_blocks}
+
+        if isinstance(prompt, list):
+            if len(prompt) == 0:
+                # Empty list - treat as no input
+                if not self.messages:
+                    raise ValueError("No conversation history or prompt provided")
+                return None
+
+            if len(prompt) > 0 and isinstance(prompt[0], dict) and "role" in prompt[0]:
+                # List[Message] input - add all messages to conversation
+                messages = cast(list[Message], prompt)
+                for message in messages:
+                    # Ensure message has content field for telemetry compatibility
+                    try:
+                        # Try to access content to see if it exists
+                        _ = message["content"]
+                        self._append_message(message)
+                    except KeyError:
+                        # Create a copy with empty content for telemetry
+                        message_to_add = cast(Message, {**message, "content": []})
+                        self._append_message(message_to_add)
+                return None  # Messages already added
+
+            # List[ContentBlock] input - convert to user message
+            content_blocks = cast(list[ContentBlock], prompt)
+            return {"role": "user", "content": content_blocks}
+
+        # This should never be reached given the Union type, but included for runtime safety
+        raise TypeError(f"Unsupported prompt type: {type(prompt)}")
 
     def _append_message(self, message: Message) -> None:
         """Appends a message to the agent's list of messages and invokes the callbacks for the MessageCreatedEvent."""
