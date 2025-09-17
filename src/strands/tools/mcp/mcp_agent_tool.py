@@ -1,3 +1,5 @@
+# ABOUTME: Adapter class that wraps MCP tools and exposes them as AgentTools with timeout support
+# ABOUTME: Bridges the gap between MCP protocol tools and the agent framework's tool interface
 """MCP Agent Tool module for adapting Model Context Protocol tools to the agent framework.
 
 This module provides the MCPAgentTool class which serves as an adapter between
@@ -6,7 +8,8 @@ It allows MCP tools to be seamlessly integrated and used within the agent ecosys
 """
 
 import logging
-from typing import TYPE_CHECKING, Any
+from datetime import timedelta
+from typing import TYPE_CHECKING, Any, Optional
 
 from mcp.types import Tool as MCPTool
 from typing_extensions import override
@@ -28,17 +31,19 @@ class MCPAgentTool(AgentTool):
     seamlessly within the agent framework.
     """
 
-    def __init__(self, mcp_tool: MCPTool, mcp_client: "MCPClient") -> None:
+    def __init__(self, mcp_tool: MCPTool, mcp_client: "MCPClient", *, timeout: Optional[timedelta] = None) -> None:
         """Initialize a new MCPAgentTool instance.
 
         Args:
             mcp_tool: The MCP tool to adapt
             mcp_client: The MCP server connection to use for tool invocation
+            timeout: Optional timeout for tool execution. If None, uses the MCP client's default timeout.
         """
         super().__init__()
         logger.debug("tool_name=<%s> | creating mcp agent tool", mcp_tool.name)
         self.mcp_tool = mcp_tool
         self.mcp_client = mcp_client
+        self._timeout = timeout
 
     @property
     def tool_name(self) -> str:
@@ -96,5 +101,6 @@ class MCPAgentTool(AgentTool):
             tool_use_id=tool_use["toolUseId"],
             name=self.tool_name,
             arguments=tool_use["input"],
+            read_timeout_seconds=self._timeout,
         )
         yield ToolResultEvent(result)

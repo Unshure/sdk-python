@@ -1,9 +1,11 @@
-from unittest.mock import MagicMock
+from datetime import timedelta
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from mcp.types import Tool as MCPTool
 
 from strands.tools.mcp import MCPAgentTool, MCPClient
+from strands.tools.mcp.mcp_types import MCPToolResult
 from strands.types._events import ToolResultEvent
 
 
@@ -24,6 +26,10 @@ def mock_mcp_client():
         "toolUseId": "test-123",
         "content": [{"text": "Success result"}],
     }
+    mock_server.call_tool_async = AsyncMock()
+    mock_server.call_tool_async.return_value = MCPToolResult(
+        status="success", toolUseId="test-123", content=[{"text": "Success result"}]
+    )
     return mock_server
 
 
@@ -58,6 +64,27 @@ def test_tool_spec_without_description(mock_mcp_tool, mock_mcp_client):
     assert tool_spec["description"] == "Tool which performs test_tool"
 
 
+def test_mcp_agent_tool_with_timeout_initialization(mock_mcp_tool, mock_mcp_client):
+    """Test that MCPAgentTool initializes correctly with timeout parameter."""
+    timeout = timedelta(minutes=5)
+    tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client, timeout=timeout)
+
+    assert tool.tool_name == "test_tool"
+    assert tool.mcp_tool == mock_mcp_tool
+    assert tool.mcp_client == mock_mcp_client
+    assert tool._timeout == timeout
+
+
+def test_mcp_agent_tool_without_timeout_initialization(mock_mcp_tool, mock_mcp_client):
+    """Test that MCPAgentTool initializes correctly without timeout parameter."""
+    tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client)
+
+    assert tool.tool_name == "test_tool"
+    assert tool.mcp_tool == mock_mcp_tool
+    assert tool.mcp_client == mock_mcp_client
+    assert tool._timeout is None
+
+
 @pytest.mark.asyncio
 async def test_stream(mcp_agent_tool, mock_mcp_client, alist):
     tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {"param": "value"}}
@@ -67,5 +94,38 @@ async def test_stream(mcp_agent_tool, mock_mcp_client, alist):
 
     assert tru_events == exp_events
     mock_mcp_client.call_tool_async.assert_called_once_with(
-        tool_use_id="test-123", name="test_tool", arguments={"param": "value"}
+        tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, read_timeout_seconds=None
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_with_timeout(mock_mcp_tool, mock_mcp_client, alist):
+    """Test that stream method passes timeout to MCP client."""
+    timeout = timedelta(minutes=5)
+    tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client, timeout=timeout)
+
+    tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {"param": "value"}}
+
+    tru_events = await alist(tool.stream(tool_use, {}))
+    exp_events = [ToolResultEvent(mock_mcp_client.call_tool_async.return_value)]
+
+    assert tru_events == exp_events
+    mock_mcp_client.call_tool_async.assert_called_once_with(
+        tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, read_timeout_seconds=timeout
+    )
+
+
+@pytest.mark.asyncio
+async def test_stream_without_timeout_passes_none(mock_mcp_tool, mock_mcp_client, alist):
+    """Test that stream method passes None timeout when no timeout configured."""
+    tool = MCPAgentTool(mock_mcp_tool, mock_mcp_client)  # No timeout
+
+    tool_use = {"toolUseId": "test-123", "name": "test_tool", "input": {"param": "value"}}
+
+    tru_events = await alist(tool.stream(tool_use, {}))
+    exp_events = [ToolResultEvent(mock_mcp_client.call_tool_async.return_value)]
+
+    assert tru_events == exp_events
+    mock_mcp_client.call_tool_async.assert_called_once_with(
+        tool_use_id="test-123", name="test_tool", arguments={"param": "value"}, read_timeout_seconds=None
     )

@@ -63,15 +63,24 @@ class MCPClient:
     from MCP tools, it will be returned as the last item in the content array of the ToolResult.
     """
 
-    def __init__(self, transport_callable: Callable[[], MCPTransport], *, startup_timeout: int = 30):
+    def __init__(
+        self,
+        transport_callable: Callable[[], MCPTransport],
+        *,
+        startup_timeout: int = 30,
+        default_tool_timeout: Optional[timedelta] = None,
+    ):
         """Initialize a new MCP Server connection.
 
         Args:
             transport_callable: A callable that returns an MCPTransport (read_stream, write_stream) tuple
             startup_timeout: Timeout after which MCP server initialization should be cancelled
                 Defaults to 30.
+            default_tool_timeout: Default timeout for tool calls when no specific timeout is provided.
+                If None, no default timeout is applied.
         """
         self._startup_timeout = startup_timeout
+        self._default_tool_timeout = default_tool_timeout
 
         mcp_instrumentation()
         self._session_id = uuid.uuid4()
@@ -149,7 +158,7 @@ class MCPClient:
         - _background_thread_event_loop: AsyncIO event loop in background thread
         - _close_event: AsyncIO event to signal thread shutdown
         - _init_future: Future for initialization synchronization
-        
+
         Cleanup order:
         1. Signal close event to background thread (if session initialized)
         2. Wait for background thread to complete
@@ -275,7 +284,7 @@ class MCPClient:
             tool_use_id: Unique identifier for this tool use
             name: Name of the tool to call
             arguments: Optional arguments to pass to the tool
-            read_timeout_seconds: Optional timeout for the tool call
+            read_timeout_seconds: Optional timeout for the tool call. If None, uses the client's default timeout.
 
         Returns:
             MCPToolResult: The result of the tool call
@@ -284,9 +293,12 @@ class MCPClient:
         if not self._is_session_active():
             raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
 
+        # Use default timeout if no specific timeout provided
+        effective_timeout = read_timeout_seconds if read_timeout_seconds is not None else self._default_tool_timeout
+
         async def _call_tool_async() -> MCPCallToolResult:
             return await cast(ClientSession, self._background_thread_session).call_tool(
-                name, arguments, read_timeout_seconds
+                name, arguments, effective_timeout
             )
 
         try:
@@ -312,7 +324,7 @@ class MCPClient:
             tool_use_id: Unique identifier for this tool use
             name: Name of the tool to call
             arguments: Optional arguments to pass to the tool
-            read_timeout_seconds: Optional timeout for the tool call
+            read_timeout_seconds: Optional timeout for the tool call. If None, uses the client's default timeout.
 
         Returns:
             MCPToolResult: The result of the tool call
@@ -321,9 +333,12 @@ class MCPClient:
         if not self._is_session_active():
             raise MCPClientInitializationError(CLIENT_SESSION_NOT_RUNNING_ERROR_MESSAGE)
 
+        # Use default timeout if no specific timeout provided
+        effective_timeout = read_timeout_seconds if read_timeout_seconds is not None else self._default_tool_timeout
+
         async def _call_tool_async() -> MCPCallToolResult:
             return await cast(ClientSession, self._background_thread_session).call_tool(
-                name, arguments, read_timeout_seconds
+                name, arguments, effective_timeout
             )
 
         try:

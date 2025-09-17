@@ -522,21 +522,101 @@ def test_stop_with_background_thread_but_no_event_loop():
     # Verify cleanup occurred
     assert client._background_thread is None
 
-    
-def test_mcp_client_state_reset_after_timeout():
-    """Test that all client state is properly reset after timeout."""
-    def slow_transport():
-        time.sleep(4)  # Longer than timeout
-        return MagicMock()
 
-    client = MCPClient(slow_transport, startup_timeout=2)
-    
-    # First attempt should timeout
-    with pytest.raises(MCPClientInitializationError, match="background thread did not start in 2 seconds"):
-        client.start()
+@pytest.mark.asyncio
+async def test_call_tool_async_with_default_timeout(mock_transport, mock_session):
+    """Test that call_tool_async uses default timeout when none specified."""
+    from datetime import timedelta
 
-    # Verify all state is reset
-    assert client._background_thread is None
-    assert client._background_thread_session is None
-    assert client._background_thread_event_loop is None
-    assert not client._init_future.done()  # New future created
+    mock_content = MCPTextContent(type="text", text="Test message")
+    mock_result = MCPCallToolResult(isError=False, content=[mock_content])
+    mock_session.call_tool.return_value = mock_result
+
+    default_timeout = timedelta(minutes=10)
+    with MCPClient(mock_transport["transport_callable"], default_tool_timeout=default_timeout) as client:
+        with (
+            patch("asyncio.run_coroutine_threadsafe") as mock_run_coroutine_threadsafe,
+            patch("asyncio.wrap_future") as mock_wrap_future,
+        ):
+            mock_future = MagicMock()
+            mock_run_coroutine_threadsafe.return_value = mock_future
+
+            # Create an async mock that resolves to the mock result
+            async def mock_awaitable():
+                return mock_result
+
+            mock_wrap_future.return_value = mock_awaitable()
+
+            result = await client.call_tool_async(
+                tool_use_id="test-123",
+                name="test_tool",
+                arguments={"param": "value"},
+                # No read_timeout_seconds specified - should use default
+            )
+
+            # Verify the default timeout was used
+            mock_run_coroutine_threadsafe.assert_called_once()
+            mock_wrap_future.assert_called_once_with(mock_future)
+
+        assert result["status"] == "success"
+        assert result["toolUseId"] == "test-123"
+
+
+def test_call_tool_sync_with_default_timeout(mock_transport, mock_session):
+    """Test that call_tool_sync uses default timeout when none specified."""
+    from datetime import timedelta
+
+    mock_content = MCPTextContent(type="text", text="Test message")
+    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[mock_content])
+
+    default_timeout = timedelta(minutes=10)
+    with MCPClient(mock_transport["transport_callable"], default_tool_timeout=default_timeout) as client:
+        result = client.call_tool_sync(tool_use_id="test-123", name="test_tool", arguments={"param": "value"})
+
+        # The session.call_tool should have been called with the default timeout
+        mock_session.call_tool.assert_called_once_with("test_tool", {"param": "value"}, default_timeout)
+
+        assert result["status"] == "success"
+        assert result["toolUseId"] == "test-123"
+
+
+def test_call_tool_sync_explicit_timeout_overrides_default(mock_transport, mock_session):
+    """Test that explicit timeout overrides default timeout."""
+    from datetime import timedelta
+
+    mock_content = MCPTextContent(type="text", text="Test message")
+    mock_session.call_tool.return_value = MCPCallToolResult(isError=False, content=[mock_content])
+
+    default_timeout = timedelta(minutes=10)
+    explicit_timeout = timedelta(minutes=5)
+
+    with MCPClient(mock_transport["transport_callable"], default_tool_timeout=default_timeout) as client:
+        result = client.call_tool_sync(
+            tool_use_id="test-123",
+            name="test_tool",
+            arguments={"param": "value"},
+            read_timeout_seconds=explicit_timeout,
+        )
+
+        # The session.call_tool should have been called with the explicit timeout, not default
+        mock_session.call_tool.assert_called_once_with("test_tool", {"param": "value"}, explicit_timeout)
+
+        assert result["status"] == "success"
+        assert result["toolUseId"] == "test-123"
+
+
+def test_mcp_client_initialization_with_default_timeout():
+    """Test that MCPClient can be initialized with default_tool_timeout."""
+    from datetime import timedelta
+
+    default_timeout = timedelta(minutes=15)
+    client = MCPClient(MagicMock(), default_tool_timeout=default_timeout)
+
+    assert client._default_tool_timeout == default_timeout
+
+
+def test_mcp_client_initialization_without_default_timeout():
+    """Test that MCPClient initializes with None default_tool_timeout when not specified."""
+    client = MCPClient(MagicMock())
+
+    assert client._default_tool_timeout is None

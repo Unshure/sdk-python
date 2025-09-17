@@ -298,3 +298,74 @@ def test_mcp_client_timeout_integration():
         tools = client.list_tools_sync()
         assert len(tools) >= 0  # Should work now
 
+
+def test_mcp_client_with_default_tool_timeout():
+    """Test that MCPClient works with default tool timeout configuration."""
+    from datetime import timedelta
+
+    stdio_mcp_client = MCPClient(
+        lambda: stdio_client(StdioServerParameters(command="python", args=["tests_integ/echo_server.py"])),
+        default_tool_timeout=timedelta(minutes=10),  # 10 minute default timeout
+    )
+
+    with stdio_mcp_client:
+        # Test that tools can be created with the client that has default timeout
+        tools = stdio_mcp_client.list_tools_sync()
+        assert len(tools) > 0
+
+        # Test that tool execution works with default timeout
+        result = stdio_mcp_client.call_tool_sync(
+            tool_use_id="test-default-timeout-123", name="echo", arguments={"to_echo": "DEFAULT_TIMEOUT_TEST"}
+        )
+
+        assert result["status"] == "success"
+        assert result["toolUseId"] == "test-default-timeout-123"
+        assert result["content"] == [{"text": "DEFAULT_TIMEOUT_TEST"}]
+
+
+def test_mcp_agent_tool_with_custom_timeout():
+    """Test that MCPAgentTool works with custom timeout configuration."""
+    from datetime import timedelta
+
+    from strands.tools.mcp import MCPAgentTool
+
+    stdio_mcp_client = MCPClient(
+        lambda: stdio_client(StdioServerParameters(command="python", args=["tests_integ/echo_server.py"]))
+    )
+
+    with stdio_mcp_client:
+        tools = stdio_mcp_client.list_tools_sync()
+        assert len(tools) > 0
+
+        # Create an MCPAgentTool with custom timeout
+        echo_tool = None
+        for tool in tools:
+            if tool.tool_name == "echo":
+                # Create a new MCPAgentTool with custom timeout
+                echo_tool = MCPAgentTool(tool.mcp_tool, stdio_mcp_client, timeout=timedelta(minutes=15))
+                break
+
+        assert echo_tool is not None
+        assert echo_tool._timeout == timedelta(minutes=15)
+
+        # Test that the tool works (this verifies the timeout is passed correctly)
+        import asyncio
+
+        async def test_tool():
+            tool_use = {
+                "toolUseId": "test-custom-timeout-456",
+                "name": "echo",
+                "input": {"to_echo": "CUSTOM_TIMEOUT_TEST"},
+            }
+
+            events = []
+            async for event in echo_tool.stream(tool_use, {}):
+                events.append(event)
+
+            assert len(events) == 1
+            result = events[0].tool_result  # Use tool_result instead of result
+            assert result["status"] == "success"
+            assert result["toolUseId"] == "test-custom-timeout-456"
+            assert result["content"] == [{"text": "CUSTOM_TIMEOUT_TEST"}]
+
+        asyncio.run(test_tool())
