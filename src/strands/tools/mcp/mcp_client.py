@@ -378,6 +378,12 @@ class MCPClient:
 
         return result
 
+    # Raise an exception if the underlying client raises an exception in a message
+    # This happens when the underlying client has an http timeout error
+    async def _handle_error_message(message: Exception | Any) -> None:
+        if isinstance(message, Exception):
+            raise message
+
     async def _async_background_thread(self) -> None:
         """Asynchronous method that runs in the background thread to manage the MCP connection.
 
@@ -388,7 +394,9 @@ class MCPClient:
         try:
             async with self._transport_callable() as (read_stream, write_stream, *_):
                 self._log_debug_with_thread("transport connection established")
-                async with ClientSession(read_stream, write_stream) as session:
+                async with ClientSession(
+                    read_stream, write_stream, message_handler=self._handle_error_message
+                ) as session:
                     self._log_debug_with_thread("initializing MCP session")
                     await session.initialize()
 
