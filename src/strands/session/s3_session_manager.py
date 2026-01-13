@@ -1,14 +1,17 @@
 """S3-based session manager for cloud storage."""
 
+import asyncio
 import json
 import logging
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, cast
 
 import boto3
+from aiobotocore.session import AioSession
 from botocore.config import Config as BotocoreConfig
 from botocore.exceptions import ClientError
 
 from .. import _identifier
+from .._async import run_async
 from ..types.exceptions import SessionException
 from ..types.session import Session, SessionAgent, SessionMessage
 from .repository_session_manager import RepositorySessionManager
@@ -69,6 +72,8 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
 
         session = boto_session or boto3.Session(region_name=region_name)
 
+        self._client_config = None
+
         # Add strands-agents to the request user agent
         if boto_client_config:
             existing_user_agent = getattr(boto_client_config, "user_agent_extra", None)
@@ -77,11 +82,19 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
                 new_user_agent = f"{existing_user_agent} strands-agents"
             else:
                 new_user_agent = "strands-agents"
-            client_config = boto_client_config.merge(BotocoreConfig(user_agent_extra=new_user_agent))
+            self._client_config = boto_client_config.merge(BotocoreConfig(user_agent_extra=new_user_agent))
         else:
-            client_config = BotocoreConfig(user_agent_extra="strands-agents")
+            self._client_config = BotocoreConfig(user_agent_extra="strands-agents")
 
-        self.client = session.client(service_name="s3", config=client_config)
+        self.client = session.client(service_name="s3", config=self._client_config)
+
+        self._async_session = None
+        self._region_name = region_name
+        # Only create an async client if the user did not pass in a boto_session because 
+        # we cannot recreate an async client from a predefined session.
+        if not boto_session:
+            self._async_session = AioSession()
+
         super().__init__(session_id=session_id, session_repository=self)
 
     def _get_session_path(self, session_id: str) -> str:
@@ -136,6 +149,24 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
             response = self.client.get_object(Bucket=self.bucket, Key=key)
             content = response["Body"].read().decode("utf-8")
             return cast(dict[str, Any], json.loads(content))
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                return None
+            else:
+                raise SessionException(f"S3 error reading {key}: {e}") from e
+        except json.JSONDecodeError as e:
+            raise SessionException(f"Invalid JSON in S3 object {key}: {e}") from e
+        
+    async def _async_read_s3_object(self, key: str) -> Optional[Dict[str, Any]]:
+        """Async read JSON object from S3."""
+        if self._async_session is None:
+            raise SessionException("AsyncSession is not initialized.")
+        try:
+            async with self._async_session.create_client('s3', config=self._client_config, region_name=self._region_name) as async_client:
+                response = await async_client.get_object(Bucket=self.bucket, Key=key)
+                content_body = await response["Body"].read()
+                content = content_body.decode("utf-8")
+                return cast(dict[str, Any], json.loads(content))
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 return None
@@ -288,9 +319,16 @@ class S3SessionManager(RepositorySessionManager, SessionRepository):
                 message_keys = message_keys[offset:]
 
             # Load only the required message objects
+            message_data_list: list[dict[str, Any] | None]
+            if self._async_session is not None:
+                async def run_gather():
+                    return await asyncio.gather(*[self._async_read_s3_object(message_key) for message_key in message_keys])
+                message_data_list = run_async(run_gather)
+            else:
+                message_data_list = [self._read_s3_object(message_key) for message_key in message_keys] 
+            
             messages: List[SessionMessage] = []
-            for key in message_keys:
-                message_data = self._read_s3_object(key)
+            for message_data in message_data_list:
                 if message_data:
                     messages.append(SessionMessage.from_dict(message_data))
 

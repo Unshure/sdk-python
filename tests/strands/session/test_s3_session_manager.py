@@ -1,6 +1,7 @@
 """Tests for S3SessionManager."""
 
 import json
+from unittest import mock
 from unittest.mock import Mock
 
 import boto3
@@ -38,7 +39,8 @@ def s3_bucket(mocked_aws):
 @pytest.fixture
 def s3_manager(mocked_aws, s3_bucket):
     """Create S3SessionManager with mocked S3."""
-    yield S3SessionManager(session_id="test", bucket=s3_bucket, prefix="sessions/", region_name="us-west-2")
+    mock_boto_session = boto3.Session()
+    yield S3SessionManager(session_id="test", bucket=s3_bucket, prefix="sessions/", region_name="us-west-2", boto_session=mock_boto_session)
 
 
 @pytest.fixture
@@ -376,6 +378,87 @@ def test__get_message_path_invalid_message_id(message_id, s3_manager):
     with pytest.raises(ValueError, match=r"message_id=<.*> \| message id must be an integer"):
         s3_manager._get_message_path("session1", "agent1", message_id)
 
+
+def test__list_messages_async(mocked_aws, s3_bucket, sample_agent):
+    """Test async reading of messages from S3."""
+    with mock.patch("strands.session.s3_session_manager.AioSession") as mock_aio_session:
+        
+        # Mock async aiobotocore client get_object responses
+        mock_async_client = mock.AsyncMock()
+        mock_responses = []
+        for i in range(3):
+            mock_body = mock.AsyncMock()
+            mock_body.read.return_value = json.dumps({
+                "message": {"role": "user", "content": [{"text": f"Message {i}"}]},
+                "message_id": i,
+                "created_at": "2026-01-14T00:00:00Z",
+                "updated_at": "2026-01-14T00:00:00Z"
+            }).encode("utf-8")
+            mock_responses.append({"Body": mock_body})
+        
+        mock_async_client.get_object.side_effect = mock_responses
+        
+        # Mock the AioSession import, and its context manager `__aenter__` function to return a mock client
+        mock_aio_session.return_value.create_client.return_value.__aenter__.return_value = mock_async_client
+        
+        # Create an S3SessionManager, which will use the above mocked imports
+        session_manager = S3SessionManager(session_id="test", bucket=s3_bucket, region_name="us-west-2")
+
+        # Create an agent in this session. This will be used by the mocked boto3 client, NOT the mocked aiobotocore client
+        session_manager.create_agent(session_id='test', session_agent=sample_agent)
+        
+        # Mock the sync client `list_objects_v2`
+        mock_paginator = mock.Mock()
+        mock_paginator.paginate.return_value = [
+            {
+                "Contents": [
+                    {"Key": f"{session_manager.prefix}/session_test/agents/test-agent/messages/message_{i}.json"}
+                    for i in range(3)
+                ]
+            }
+        ]
+        session_manager.client.get_paginator = mock.Mock(return_value=mock_paginator)
+
+        
+        result = session_manager.list_messages(session_id="test", agent_id="test-agent")
+
+        assert result[2].message["content"][0]["text"] == "Message 2"
+
+@pytest.mark.asyncio
+async def test__list_messages_async_no_key_error_returns_none(mocked_aws, s3_bucket, sample_agent):
+    """Test async reading of messages from S3."""
+    with mock.patch("strands.session.s3_session_manager.AioSession") as mock_aio_session:
+        
+        # Mock async aiobotocore client get_object responses
+        mock_async_client = mock.AsyncMock()
+        mock_async_client.get_object.side_effect = ClientError(error_response={"Error": {"Code": "NoSuchKey"}}, operation_name="test")
+        
+        # Mock the AioSession import, and its context manager `__aenter__` function to return a mock client
+        mock_aio_session.return_value.create_client.return_value.__aenter__.return_value = mock_async_client
+        
+        # Create an S3SessionManager, which will use the above mocked imports
+        session_manager = S3SessionManager(session_id="test", bucket=s3_bucket)
+
+        result = await session_manager._async_read_s3_object("temp")
+        assert result is None
+
+@pytest.mark.asyncio
+async def test__list_messages_async_client_error_returns_session_exception(mocked_aws, s3_bucket, sample_agent):
+    """Test async reading of messages from S3."""
+    with mock.patch("strands.session.s3_session_manager.AioSession") as mock_aio_session:
+        
+        # Mock async aiobotocore client get_object responses
+        mock_async_client = mock.AsyncMock()
+        mock_async_client.get_object.side_effect = ClientError(error_response={"Error": {"Code": "OtherCode"}}, operation_name="test")
+        
+        # Mock the AioSession import, and its context manager `__aenter__` function to return a mock client
+        mock_aio_session.return_value.create_client.return_value.__aenter__.return_value = mock_async_client
+        
+        # Create an S3SessionManager, which will use the above mocked imports
+        session_manager = S3SessionManager(session_id="test", bucket=s3_bucket)
+
+        with pytest.raises(SessionException):
+            await session_manager._async_read_s3_object("temp")
 
 @pytest.fixture
 def mock_multi_agent():
