@@ -19,6 +19,7 @@ from strands.agent.state import AgentState
 from strands.handlers.callback_handler import PrintingCallbackHandler, null_callback_handler
 from strands.hooks import BeforeToolCallEvent
 from strands.interrupt import Interrupt
+from strands.models import CacheConfig
 from strands.models.bedrock import DEFAULT_BEDROCK_MODEL_ID, BedrockModel
 from strands.session.repository_session_manager import RepositorySessionManager
 from strands.telemetry.tracer import serialize
@@ -2186,8 +2187,6 @@ def test_agent_skips_fix_for_valid_conversation(mock_model, agenerator):
 
 def test_cache_config_does_not_mutate_original_messages(mock_model, agenerator):
     """Test that cache_config injection does not mutate the original agent.messages."""
-    from strands.models import CacheConfig
-
     mock_model.mock_stream.return_value = agenerator(
         [
             {"messageStart": {"role": "assistant"}},
