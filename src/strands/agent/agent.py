@@ -278,6 +278,8 @@ class Agent:
                 self.hooks.add_hook(hook)
         self.hooks.invoke_callbacks(AgentInitializedEvent(agent=self))
 
+        logger.debug("agent_id=<%s>, name=<%s> | agent initialized", self.agent_id, self.name)
+
     @property
     def system_prompt(self) -> str | None:
         """Get the system prompt as a string for backwards compatibility.

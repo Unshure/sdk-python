@@ -288,6 +288,18 @@ def test_agent__init__invalid_id(agent_id):
         Agent(agent_id=agent_id)
 
 
+def test_agent__init__logs_debug_message(mock_model, caplog):
+    import logging
+
+    with caplog.at_level(logging.DEBUG, logger="strands.agent.agent"):
+        agent = Agent(model=mock_model, agent_id="test-agent-123", name="TestAgent")
+
+    assert any("agent initialized" in record.message for record in caplog.records)
+    assert any("agent_id=<test-agent-123>" in record.message for record in caplog.records)
+    assert any("name=<TestAgent>" in record.message for record in caplog.records)
+    assert agent.agent_id == "test-agent-123"
+
+
 def test_agent__call__(
     mock_model,
     system_prompt,
