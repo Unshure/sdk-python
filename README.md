@@ -34,7 +34,7 @@
 
 Strands Agents is a simple yet powerful SDK that takes a model-driven approach to building and running AI agents. From simple conversational assistants to complex autonomous workflows, from local development to production deployment, Strands Agents scales with your needs.
 
-## Feature Overview
+## Overview
 
 - **Lightweight & Flexible**: Simple agent loop that just works and is fully customizable
 - **Model Agnostic**: Support for Amazon Bedrock, Anthropic, Gemini, LiteLLM, Llama, Ollama, OpenAI, Writer, and custom providers
