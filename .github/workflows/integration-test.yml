@@ -60,6 +60,5 @@ jobs:
           hatch test tests_integ
 
       - name: Publish test metrics to CloudWatch
-        if: ${{ github.event.organization == 'Unshure' }} 
         run: |
           python .github/scripts/upload-integ-test-metrics.py ./build/test-results.xml ${{ github.event.repository }}
