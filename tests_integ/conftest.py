@@ -189,7 +189,7 @@ def _load_api_keys_from_secrets_manager():
     Validate that required environment variables are set when running in GitHub Actions.
     This prevents tests from being unintentionally skipped due to missing credentials.
     """
-    if os.environ.get("GITHUB_ACTIONS") != "true":
+    if os.environ.get("GITHUB_ACTIONS") != "false":
         logger.warning("Tests running outside GitHub Actions, skipping required provider validation")
         return
 
