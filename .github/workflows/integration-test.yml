@@ -60,5 +60,7 @@ jobs:
           hatch test tests_integ
 
       - name: Publish test metrics to CloudWatch
+        if: always()
         run: |
+          pip install --no-cache-dir boto3
           python .github/scripts/upload-integ-test-metrics.py ./build/test-results.xml ${{ github.event.repository }}

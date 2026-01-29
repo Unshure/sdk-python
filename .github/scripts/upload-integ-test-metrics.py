@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import sys
 import xml.etree.ElementTree as ET
-from datetime import datetime, UTC
+from datetime import datetime
 from dataclasses import dataclass
 from typing import Any, Literal, TypedDict
 import os
@@ -67,7 +67,7 @@ def parse_junit_xml(xml_file_path: str) -> list[TestResult]:
 
 def build_metric_data(test_results: list[TestResult], repository: str) -> list[MetricDatum]:
     metrics: list[MetricDatum] = []
-    timestamp = datetime.now(UTC)
+    timestamp = datetime.utcnow()
     
     for test in test_results:
         test_name = f"{test.classname}.{test.name}"
