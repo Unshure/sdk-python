@@ -66,7 +66,6 @@ Ensure you have Python 3.10+ installed, then:
 python -m venv .venv
 source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
 
-# Install Strands and tools
 pip install strands-agents strands-agents-tools
 ```
 
