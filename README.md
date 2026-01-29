@@ -110,7 +110,6 @@ Seamlessly integrate Model Context Protocol (MCP) servers:
 from strands import Agent
 from strands.tools.mcp import MCPClient
 from mcp import stdio_client, StdioServerParameters
-
 aws_docs_client = MCPClient(
     lambda: stdio_client(StdioServerParameters(command="uvx", args=["awslabs.aws-documentation-mcp-server@latest"]))
 )
